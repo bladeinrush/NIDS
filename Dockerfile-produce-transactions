@@ -1,0 +1,18 @@
+# Этап сборки зависимостей
+FROM python:3.9-slim AS builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --user -r requirements.txt
+
+# Финальный образ
+FROM python:3.9-slim
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+# Устанавливаем зависимости для Scapy
+RUN apt-get update && apt-get install -y \
+    libpcap0.8-dev \
+    tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+COPY produce_transactions.py .
+CMD ["python", "produce_transactions.py"]

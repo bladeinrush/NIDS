@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload PCAP File</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="text-center mb-4">
+            <h1 class="display-5 fw-bold text-primary">Upload PCAP File</h1>
+            <p class="lead text-muted">Upload your PCAP or PCAPNG file for analysis</p>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form id="upload-form" method="post" enctype="multipart/form-data" action="/upload">
+                    <div class="mb-3">
+                        <label for="file" class="form-label fw-bold">
+                            <i class="fas fa-file-upload me-1"></i> Select PCAP File (.pcap or .pcapng)
+                        </label>
+                        <input type="file" class="form-control" id="file" name="file" accept=".pcap,.pcapng" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-upload me-1"></i> Upload File
+                        <span class="spinner-border spinner-border-sm ms-2" role="status" aria-hidden="true" style="display: none;"></span>
+                    </button>
+                </form>
+                <div id="upload-result" class="mt-4 upload-result"></div>
+
+                <div class="mt-4">
+                    <h4 class="fw-bold"><i class="fas fa-shield-alt me-1"></i> File Alerts</h4>
+                    <button id="clear-btn" class="btn btn-danger mb-2"><i class="fas fa-trash"></i> Clear Alerts</button>
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th><i class="fas fa-clock me-1"></i> Timestamp</th>
+                                    <th><i class="fas fa-shield-alt me-1"></i> Attack Status</th>
+                                    <th><i class="fas fa-server me-1"></i> Source IP</th>
+                                    <th><i class="fas fa-server me-1"></i> Destination IP</th>
+                                    <th><i class="fas fa-port me-1"></i> Source Port</th>
+                                    <th><i class="fas fa-port me-1"></i> Destination Port</th>
+                                    <th><i class="fas fa-network-wired me-1"></i> Protocol</th>
+                                    <th><i class="fas fa-percent me-1"></i> Probability</th>
+                                    <th><i class="fas fa-file me-1"></i> File</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alerts-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <a href="/" class="btn btn-outline-secondary w-100 mt-3">
+                    <i class="fas fa-arrow-left me-1"></i> Back to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allAlerts = [];
+        let currentFile = null;
+        let eventSource = null;
+
+        // Функция рендеринга таблицы алертов файлов
+        const renderAlerts = () => {
+            console.log('Rendering file alerts:', allAlerts);
+            const tableBody = document.getElementById('alerts-table');
+            tableBody.innerHTML = '';
+            allAlerts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            const filteredAlerts = currentFile ? allAlerts.filter(alert => alert.file === currentFile) : allAlerts;
+            if (filteredAlerts.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="9" class="text-warning">No file alerts available.</td></tr>';
+                return;
+            }
+
+            filteredAlerts.forEach(alert => {
+                const attackStatus = alert.attack_status?.toLowerCase().includes('attack') ? 'attack' : 'normal';
+                const row = document.createElement('tr');
+                row.className = `alert-row ${attackStatus}`;
+                row.innerHTML = `
+                    <td>${new Date(alert.timestamp || '').toLocaleString()}</td>
+                    <td class="${attackStatus}">
+                        <i class="fas ${attackStatus === 'attack' ? 'fa-exclamation-triangle status-icon text-danger' : 'fa-check-circle status-icon text-success'}"></i>
+                        ${alert.attack_status || 'N/A'}
+                    </td>
+                    <td>${alert.src_ip || 'N/A'}</td>
+                    <td>${alert.dst_ip || 'N/A'}</td>
+                    <td>${alert.src_port || 'N/A'}</td>
+                    <td>${alert.dst_port || 'N/A'}</td>
+                    <td>${alert.protocol || 'N/A'}</td>
+                    <td>${alert.probability ? alert.probability.toFixed(4) : 'N/A'}</td>
+                    <td>${alert.file || 'N/A'}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        };
+
+        // Функция подключения к SSE
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            console.log('Attempting to connect to /file_stream on port 5001');
+            eventSource = new EventSource('http://localhost:5001/file_stream');
+
+            eventSource.onopen = () => {
+                console.log('SSE connection opened successfully');
+            };
+
+            eventSource.onmessage = (event) => {
+                try {
+                    console.log('Raw SSE data received:', event.data);
+                    const dataObj = JSON.parse(event.data);
+                    console.log('Parsed alert:', dataObj);
+                    allAlerts.push(dataObj);
+                    if (allAlerts.length > 100) {
+                        allAlerts.shift();
+                    }
+                    renderAlerts();
+                } catch (error) {
+                    console.error('Error parsing SSE message:', error, 'Raw data:', event.data);
+                }
+            };
+
+            eventSource.onerror = () => {
+                console.error('SSE connection error, reconnecting in 5 seconds...');
+                eventSource.close();
+                setTimeout(connectSSE, 5000);
+            };
+        }
+
+        // Загрузка начальных алертов
+        fetch('http://localhost:5001/file_alerts')
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                console.log('Initial file alerts fetched:', data);
+                allAlerts = data;
+                renderAlerts();
+            })
+            .catch(error => {
+                console.error('Error fetching initial file alerts:', error);
+                const tableBody = document.getElementById('alerts-table');
+                tableBody.innerHTML = `<tr><td colspan="9" class="text-danger">Error fetching initial alerts: ${error.message}</td></tr>`;
+            });
+
+        // Первое подключение к SSE
+        connectSSE();
+
+        // Обработчик кнопки очистки
+        document.getElementById('clear-btn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('http://localhost:5001/clear_file_alerts', { method: 'POST' });
+                const data = await response.json();
+                console.log('Clear file alerts response:', data);
+                allAlerts = [];
+                renderAlerts();
+                connectSSE(); // Переподключение после очистки
+            } catch (error) {
+                console.error('Error clearing file alerts:', error);
+            }
+        });
+
+        // Обработка загрузки файла
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const resultDiv = document.getElementById('upload-result');
+            const submitButton = e.target.querySelector('button[type="submit"]');
+            const spinner = submitButton.querySelector('.spinner-border');
+            const fileInput = document.getElementById('file');
+
+            currentFile = fileInput.files[0]?.name;
+            console.log('Current file set to:', currentFile);
+            allAlerts = []; // Очищаем алерты перед новой загрузкой
+            renderAlerts();
+
+            submitButton.disabled = true;
+            spinner.style.display = 'inline-block';
+            resultDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                submitButton.disabled = false;
+                spinner.style.display = 'none';
+
+                if (data.message) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success alert-row" role="alert">
+                            <i class="fas fa-check-circle me-2"></i>
+                            <strong>Success:</strong> ${data.message} <a href="/upload" class="alert-link">View Alerts</a>
+                        </div>
+                    `;
+                    // После успешной загрузки обновляем алерты
+                    fetch('http://localhost:5001/file_alerts')
+                        .then(resp => resp.json())
+                        .then(newAlerts => {
+                            allAlerts = newAlerts.filter(alert => alert.file === currentFile);
+                            renderAlerts();
+                        })
+                        .catch(err => console.error('Error fetching updated alerts:', err));
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-danger alert-row" role="alert">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <strong>Error:</strong> ${data.error}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                submitButton.disabled = false;
+                spinner.style.display = 'none';
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger alert-row" role="alert">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Error:</strong> Failed to upload file: ${error.message}
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

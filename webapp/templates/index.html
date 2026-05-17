@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Intrusion Detection Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="text-center mb-4">
+            <h1 class="display-4 fw-bold text-primary">Intrusion Detection Dashboard</h1>
+            <p class="lead text-muted">Real-time network intrusion detection and analysis</p>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-upload me-2"></i>Upload PCAP File</h5>
+                        <a href="/upload" class="btn btn-primary w-100"><i class="fas fa-file-upload me-1"></i>Upload</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-shield-alt me-2"></i>Total Alerts</h5>
+                        <p class="card-text display-6 text-center" id="total-alerts">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="fas fa-exclamation-triangle me-2"></i>Attacks Detected</h5>
+                        <p class="card-text display-6 text-center text-danger" id="attack-count">0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3 class="fw-bold"><i class="fas fa-shield-alt me-2"></i>Real-Time Alerts</h3>
+                    <div>
+                        <button id="clear-btn" class="btn btn-danger me-2"><i class="fas fa-trash"></i> Clear Alerts</button>
+                        <button id="pause-btn" class="btn btn-warning"><i class="fas fa-pause"></i> Pause</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th><i class="fas fa-clock me-1"></i>Timestamp</th>
+                                <th><i class="fas fa-shield-alt me-1"></i>Status</th>
+                                <th>RF Prediction</th>
+                                <th>DT Prediction</th>
+                                <th><i class="fas fa-network-wired me-1"></i>Source IP</th>
+                                <th>Destination IP</th>
+                                <th>Source Port</th>
+                                <th>Destination Port</th>
+                                <th>Protocol</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    let allAlerts = [];
+    let totalAlerts = 0;
+    let attackCount = 0;
+    let isPaused = false;
+    const MAX_DISPLAY_ALERTS = 100;
+    let eventSource = null;
+
+    const renderAlerts = () => {
+        console.log('Rendering real-time alerts:', allAlerts);
+        const tableBody = document.getElementById('alerts-table');
+        tableBody.innerHTML = '';
+
+        const alertsToDisplay = allAlerts.slice(-MAX_DISPLAY_ALERTS);
+
+        alertsToDisplay.forEach(alert => {
+            const attackStatus = alert.attack_status.toLowerCase().includes('attack') ? 'attack' : 'normal';
+            const row = document.createElement('tr');
+            row.className = `alert-row ${attackStatus}`;
+            row.innerHTML = `
+                <td>${new Date(alert.timestamp).toLocaleString()}</td>
+                <td class="${attackStatus}">
+                    <i class="fas ${attackStatus === 'attack' ? 'fa-exclamation-triangle status-icon text-danger' : 'fa-check-circle status-icon text-success'}"></i>
+                    ${alert.attack_status}
+                </td>
+                <td>${alert.rf_prediction}</td>
+                <td>${alert.dt_prediction}</td>
+                <td>${alert.src_ip}</td>
+                <td>${alert.dst_ip}</td>
+                <td>${alert.src_port}</td>
+                <td>${alert.dst_port}</td>
+                <td>${alert.protocol}</td>
+            `;
+            tableBody.appendChild(row);
+        });
+
+        document.getElementById('total-alerts').textContent = totalAlerts;
+        document.getElementById('attack-count').textContent = attackCount;
+    };
+
+    function connectSSE() {
+        console.log('Connecting to /stream');
+        eventSource = new EventSource('/stream');
+
+        eventSource.onopen = function() {
+            console.log('SSE connection opened successfully for real-time alerts');
+        };
+
+        eventSource.onmessage = (event) => {
+            try {
+                const alert = JSON.parse(event.data);
+                console.log('Received real-time alert via SSE:', alert);
+                if (!isPaused) {
+                    allAlerts.push(alert);
+                    totalAlerts++;
+                    if (alert.attack_status.toLowerCase().includes('attack')) {
+                        attackCount++;
+                        alert(`ATTACK DETECTED! Source IP: ${alert.src_ip}, Destination IP: ${alert.dst_ip}`);
+                    }
+
+                    if (allAlerts.length > MAX_DISPLAY_ALERTS) {
+                        const removedAlert = allAlerts.shift();
+                        if (removedAlert.attack_status.toLowerCase().includes('attack')) {
+                            attackCount--;
+                        }
+                    }
+
+                    renderAlerts();
+                }
+            } catch (error) {
+                console.error('Error parsing SSE message:', error);
+            }
+        };
+
+        eventSource.onerror = () => {
+            console.error('SSE connection error for real-time alerts, reconnecting in 5 seconds...');
+            eventSource.close();
+            setTimeout(connectSSE, 5000);
+        };
+    }
+
+    // Загрузка начальных алертов
+    fetch('/alerts')
+        .then(response => response.json())
+        .then(data => {
+            console.log('Initial real-time alerts fetched:', data);
+            allAlerts = data.slice(-MAX_DISPLAY_ALERTS);
+            totalAlerts = allAlerts.length;
+            attackCount = allAlerts.filter(alert => alert.attack_status.toLowerCase().includes('attack')).length;
+            renderAlerts();
+        })
+        .catch(error => {
+            console.error('Error fetching initial alerts:', error);
+        });
+
+    // Первое подключение
+    connectSSE();
+
+    // Обработчик кнопки очистки
+    document.getElementById('clear-btn').addEventListener('click', () => {
+        allAlerts = [];
+        totalAlerts = 0;
+        attackCount = 0;
+        renderAlerts();
+        console.log('Real-time alerts cleared');
+    });
+
+    // Обработчик кнопки паузы
+    document.getElementById('pause-btn').addEventListener('click', () => {
+        isPaused = !isPaused;
+        const pauseBtn = document.getElementById('pause-btn');
+        pauseBtn.innerHTML = `<i class="fas ${isPaused ? 'fa-play' : 'fa-pause'}"></i> ${isPaused ? 'Resume' : 'Pause'}`;
+        pauseBtn.className = `btn ${isPaused ? 'btn-success' : 'btn-warning'}`;
+        console.log(`Real-time alerts ${isPaused ? 'paused' : 'resumed'}`);
+    });
+</script>
+</body>
+</html>

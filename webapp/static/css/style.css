@@ -1,0 +1,24 @@
+body {
+    background-color: #f8f9fa;
+}
+.card {
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+.table th, .table td {
+    vertical-align: middle;
+}
+.normal {
+    color: green;
+    font-weight: bold;
+}
+.attack {
+    color: red;
+    font-weight: bold;
+    background-color: #ffe6e6; /* Light red background for ATTACK DETECTED rows */
+}
+.form-label {
+    font-weight: bold;
+}
+.upload-result {
+    margin-top: 20px;
+}

@@ -1,0 +1,7 @@
+kafka-python==2.0.2
+scikit-learn==1.3.0
+pandas==1.5.3
+scapy==2.5.0
+joblib==1.2.0
+numpy==1.23.5
+flask-cors

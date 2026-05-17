@@ -1,0 +1,187 @@
+services:
+  zookeeper:
+    container_name: ids-zookeeper
+    image: confluentinc/cp-zookeeper:7.2.1
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+      - KAFKA_OPTS=-Dzookeeper.4lw.commands.whitelist=ruok,srvr,conf,mntr,stat
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    ports:
+      - "2181:2181"
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+
+  kafka:
+    container_name: ids-kafka
+    image: confluentinc/cp-kafka:7.2.1
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+      - "29092:29092"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,INTERNAL://kafka:9093,EXTERNAL://localhost:29092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "/usr/bin/kafka-topics", "--list", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+
+  consumer:
+    image: ids-consumer
+    build:
+      context: .
+      dockerfile: Dockerfile-consumer
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+
+  alerts:
+    image: ids-alerts
+    build:
+      context: .
+      dockerfile: Dockerfile-alerts
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+
+  train:
+    image: ids-train
+    build:
+      context: .
+      dockerfile: Dockerfile-train
+    volumes:
+      - ./models:/app/models
+    networks:
+      - ids-network
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  produce-transactions:
+    image: ids-produce-transactions
+    build:
+      context: .
+      dockerfile: Dockerfile-produce-transactions
+    depends_on:
+      kafka:
+        condition: service_healthy
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - NETWORK_INTERFACE=eth0
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:29092
+    network_mode: host
+    restart: "unless-stopped"
+
+  producer:
+    image: ids-producer
+    build:
+      context: .
+      dockerfile: Dockerfile-producer
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - NETWORK_INTERFACE=eth0
+      - KAFKA_BOOTSTRAP_SERVERS=localhost:29092
+    network_mode: host
+    restart: "unless-stopped"
+    
+  file_processor:
+    build:
+      context: ./file_processor
+      dockerfile: Dockerfile
+    image: nidss-file-processor
+    volumes:
+      - ./shared-uploads:/app/uploads
+      - ./models:/app/models
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+
+  webapp:
+    image: ids-webapp
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+    volumes:
+      - ./webapp/static:/app/static
+      - ./shared-uploads:/app/uploads
+    networks:
+      - ids-network
+    restart: "unless-stopped"
+  kafka_to_web:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile.kafka_to_web
+    environment:
+      - FLASK_ENV=development
+    volumes:
+      - ./webapp:/app
+    ports:
+      - "5001:5001"
+    depends_on:
+      - webapp
+      - kafka
+    networks:
+      - ids-network
+    restart: unless-stopped
+
+volumes:
+  zookeeper-data:
+  kafka-data:
+
+networks:
+  ids-network:
+    driver: bridge
+
