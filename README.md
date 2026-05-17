@@ -149,6 +149,8 @@ NIDS/
 ## Web Interface
 
 The system includes a Flask-based web dashboard accessible at `http://localhost:5000`.
+<img width="913" height="657" alt="изображение" src="https://github.com/user-attachments/assets/7f9e6781-556e-4e75-87e5-1c648e62e825" />
+
 
 ### Pages
 
