@@ -1,0 +1,18 @@
+# virtual environment
+venv/
+
+# Big file data
+*.arff
+*.txt
+kddcup*
+
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Мodels (if big)
+*.pkl
